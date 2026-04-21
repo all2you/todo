@@ -1,0 +1,49 @@
+name: daily_diary
+description: 하루를 사진과 글로 정리하는 일기 앱
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 로컬 DB
+  sqflite: ^2.3.0
+  path: ^1.9.0
+
+  # 이미지 선택 / 카메라
+  image_picker: ^1.0.7
+
+  # 디바이스 정보
+  device_info_plus: ^9.1.1
+  battery_plus: ^5.0.3
+  connectivity_plus: ^5.0.2
+
+  # 위치
+  geolocator: ^10.1.0
+  geocoding: ^2.2.1
+
+  # 날짜 / 유틸
+  intl: ^0.19.0
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+
+  # UI
+  cupertino_icons: ^1.0.6
+  flutter_staggered_grid_view: ^0.7.0
+  cached_network_image: ^3.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/
