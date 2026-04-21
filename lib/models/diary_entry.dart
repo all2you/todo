@@ -2,6 +2,7 @@ class DiaryEntry {
   final int? id;
   final String title;
   final String content;
+  final String? aiContent; // OpenAI로 다듬은 SNS 스타일 글
   final DateTime date;
   final List<String> photoPaths;
   final String? mood;
@@ -17,6 +18,7 @@ class DiaryEntry {
     this.id,
     required this.title,
     required this.content,
+    this.aiContent,
     required this.date,
     this.photoPaths = const [],
     this.mood,
@@ -34,6 +36,7 @@ class DiaryEntry {
       'id': id,
       'title': title,
       'content': content,
+      'ai_content': aiContent,
       'date': date.toIso8601String(),
       'photo_paths': photoPaths.join('|'),
       'mood': mood,
@@ -52,6 +55,7 @@ class DiaryEntry {
       id: map['id'] as int?,
       title: map['title'] as String,
       content: map['content'] as String,
+      aiContent: map['ai_content'] as String?,
       date: DateTime.parse(map['date'] as String),
       photoPaths: (map['photo_paths'] as String?)
               ?.split('|')
@@ -73,6 +77,7 @@ class DiaryEntry {
     int? id,
     String? title,
     String? content,
+    String? aiContent,
     DateTime? date,
     List<String>? photoPaths,
     String? mood,
@@ -88,6 +93,7 @@ class DiaryEntry {
       id: id ?? this.id,
       title: title ?? this.title,
       content: content ?? this.content,
+      aiContent: aiContent ?? this.aiContent,
       date: date ?? this.date,
       photoPaths: photoPaths ?? this.photoPaths,
       mood: mood ?? this.mood,

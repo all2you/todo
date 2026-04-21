@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/diary_entry.dart';
 import '../services/database_service.dart';
 import '../services/device_info_service.dart';
+import '../services/openai_service.dart';
 
 class DiaryEditScreen extends StatefulWidget {
   final DiaryEntry? existing;
@@ -29,6 +31,11 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
   bool _loadingDevice = false;
   bool _saving = false;
 
+  // AI 다듬기 상태
+  String? _aiContent;
+  bool _enhancing = false;
+  bool _showAiPreview = false;
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +47,10 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       _photos = List.from(e.photoPaths);
       _mood = e.mood;
       _weather = e.weather;
+      if (e.aiContent != null) {
+        _aiContent = e.aiContent;
+        _showAiPreview = true;
+      }
     } else {
       _selectedDate = DateTime.now();
       _titleCtrl.text = DateFormat('yyyy년 MM월 dd일', 'ko').format(_selectedDate);
@@ -64,6 +75,56 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
     }
   }
 
+  Future<void> _enhanceWithAi() async {
+    if (_contentCtrl.text.trim().isEmpty && _titleCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('먼저 일기 내용을 작성해주세요')),
+      );
+      return;
+    }
+
+    setState(() {
+      _enhancing = true;
+      _showAiPreview = false;
+      _aiContent = null;
+    });
+
+    // 현재 입력 내용으로 임시 entry 생성
+    final tempEntry = DiaryEntry(
+      title: _titleCtrl.text.trim(),
+      content: _contentCtrl.text.trim(),
+      date: _selectedDate,
+      mood: _mood,
+      weather: _weather,
+      location: _deviceSnapshot?.address,
+      batteryLevel: _deviceSnapshot?.batteryLevel,
+    );
+
+    try {
+      final result = await OpenAiService.enhanceDiary(tempEntry);
+      if (mounted) {
+        setState(() {
+          _aiContent = result;
+          _showAiPreview = true;
+        });
+        // 미리보기 패널로 스크롤
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _enhancing = false);
+    }
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     if (source == ImageSource.gallery) {
       final files = await _picker.pickMultiImage(imageQuality: 80);
@@ -71,8 +132,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
         setState(() => _photos.addAll(files.map((f) => f.path)));
       }
     } else {
-      final file =
-          await _picker.pickImage(source: source, imageQuality: 80);
+      final file = await _picker.pickImage(source: source, imageQuality: 80);
       if (file != null) setState(() => _photos.add(file.path));
     }
   }
@@ -119,8 +179,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
 
   Future<void> _save() async {
     if (_titleCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('제목을 입력해주세요')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('제목을 입력해주세요')));
       return;
     }
 
@@ -130,6 +190,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       id: widget.existing?.id,
       title: _titleCtrl.text.trim(),
       content: _contentCtrl.text.trim(),
+      aiContent: _aiContent,
       date: _selectedDate,
       photoPaths: _photos,
       mood: _mood,
@@ -210,8 +271,15 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             _buildTitleField(),
             const SizedBox(height: 12),
             _buildContentField(),
+            const SizedBox(height: 12),
+            _buildAiEnhanceButton(),
+            if (_showAiPreview && _aiContent != null) ...[
+              const SizedBox(height: 16),
+              _buildAiPreviewCard(),
+            ],
             const SizedBox(height: 16),
             _buildPhotoSection(),
+            const SizedBox(height: 40),
           ],
         ),
       ),
@@ -268,8 +336,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFF6B9B7A).withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: const Color(0xFF6B9B7A).withValues(alpha: 0.2)),
+        border:
+            Border.all(color: const Color(0xFF6B9B7A).withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -285,7 +353,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             runSpacing: 4,
             children: [
               _infoChip(Icons.phone_android, snap.deviceModel),
-              _infoChip(Icons.battery_std, '배터리 ${snap.batteryLevel}%${snap.isCharging ? " ⚡" : ""}'),
+              _infoChip(Icons.battery_std,
+                  '배터리 ${snap.batteryLevel}%${snap.isCharging ? " ⚡" : ""}'),
               _infoChip(Icons.wifi, snap.connectivity),
               if (snap.address != null && snap.address!.isNotEmpty)
                 _infoChip(Icons.location_on, snap.address!),
@@ -328,7 +397,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                     setState(() => _mood = selected ? null : kMoods[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected
                         ? const Color(0xFF6B9B7A).withValues(alpha: 0.15)
@@ -375,11 +445,12 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             children: List.generate(kWeathers.length, (i) {
               final selected = _weather == kWeathers[i];
               return GestureDetector(
-                onTap: () =>
-                    setState(() => _weather = selected ? null : kWeathers[i]),
+                onTap: () => setState(
+                    () => _weather = selected ? null : kWeathers[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected
                         ? Colors.blue.withValues(alpha: 0.1)
@@ -440,6 +511,162 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
     );
   }
 
+  Widget _buildAiEnhanceButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: _enhancing ? null : _enhanceWithAi,
+        icon: _enhancing
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.auto_awesome, size: 18),
+        label: Text(_enhancing
+            ? 'AI가 글을 다듬는 중...'
+            : (_aiContent != null ? 'AI 글 다시 다듬기' : 'AI로 SNS 글 다듬기')),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF6B9B7A),
+          side: const BorderSide(color: Color(0xFF6B9B7A)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiPreviewCard() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF6B9B7A).withValues(alpha: 0.05),
+            Colors.purple.withValues(alpha: 0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF6B9B7A).withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 헤더
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome,
+                    size: 16, color: Color(0xFF6B9B7A)),
+                const SizedBox(width: 8),
+                const Text(
+                  'AI가 다듬은 SNS 글',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: Color(0xFF6B9B7A),
+                  ),
+                ),
+                const Spacer(),
+                // 복사 버튼
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: _aiContent!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('클립보드에 복사되었습니다'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: const Color(0xFF6B9B7A).withValues(alpha: 0.4)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.copy, size: 12, color: Color(0xFF6B9B7A)),
+                        SizedBox(width: 4),
+                        Text('복사',
+                            style: TextStyle(
+                                fontSize: 11, color: Color(0xFF6B9B7A))),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // 닫기
+                GestureDetector(
+                  onTap: () => setState(() => _showAiPreview = false),
+                  child: const Icon(Icons.close,
+                      size: 16, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          // 본문
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: SelectableText(
+              _aiContent!,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.8,
+                color: Color(0xFF3A3A3A),
+              ),
+            ),
+          ),
+          // 원본으로 교체 버튼
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: () {
+                  _contentCtrl.text = _aiContent!;
+                  setState(() {
+                    _showAiPreview = false;
+                    _aiContent = null;
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('AI 글이 본문에 적용되었습니다'),
+                      backgroundColor: Color(0xFF6B9B7A),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.swap_horiz, size: 16),
+                label: const Text('이 글로 본문 교체하기'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF6B9B7A),
+                  backgroundColor:
+                      const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPhotoSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -447,8 +674,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
         Row(
           children: [
             const Text('사진',
-                style:
-                    TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(width: 8),
             Text('(${_photos.length}장)',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
@@ -488,13 +714,11 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                     top: 4,
                     right: 4,
                     child: GestureDetector(
-                      onTap: () =>
-                          setState(() => _photos.removeAt(i)),
+                      onTap: () => setState(() => _photos.removeAt(i)),
                       child: Container(
                         padding: const EdgeInsets.all(2),
                         decoration: const BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle),
+                            color: Colors.black54, shape: BoxShape.circle),
                         child: const Icon(Icons.close,
                             size: 14, color: Colors.white),
                       ),

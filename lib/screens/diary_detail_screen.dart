@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/diary_entry.dart';
+import '../services/openai_service.dart';
 import 'diary_edit_screen.dart';
 
 class DiaryDetailScreen extends StatefulWidget {
@@ -13,30 +15,118 @@ class DiaryDetailScreen extends StatefulWidget {
   State<DiaryDetailScreen> createState() => _DiaryDetailScreenState();
 }
 
-class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
+class _DiaryDetailScreenState extends State<DiaryDetailScreen>
+    with SingleTickerProviderStateMixin {
   late DiaryEntry _entry;
   int _currentPhotoIndex = 0;
+  late TabController _tabController;
+  bool _enhancing = false;
 
   @override
   void initState() {
     super.initState();
     _entry = widget.entry;
+    // AI 글이 있으면 탭 2개, 없으면 1개
+    _tabController = TabController(
+      length: _entry.aiContent != null ? 2 : 1,
+      vsync: this,
+    );
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _rebuildTabs() {
+    final newLength = _entry.aiContent != null ? 2 : 1;
+    if (_tabController.length != newLength) {
+      _tabController.dispose();
+      _tabController = TabController(length: newLength, vsync: this);
+    }
+  }
+
+  Future<void> _enhanceWithAi() async {
+    setState(() => _enhancing = true);
+    try {
+      final result = await OpenAiService.enhanceDiary(_entry);
+      if (mounted) {
+        setState(() {
+          _entry = _entry.copyWith(aiContent: result);
+          _rebuildTabs();
+          // 생성 직후 AI 탭으로 전환
+          if (_tabController.length == 2) {
+            _tabController.animateTo(1);
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _enhancing = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasTabs = _entry.aiContent != null;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F3EE),
-      body: CustomScrollView(
-        slivers: [
+      body: NestedScrollView(
+        headerSliverBuilder: (_, __) => [
           _buildSliverAppBar(),
-          SliverToBoxAdapter(child: _buildBody()),
         ],
+        body: Column(
+          children: [
+            if (hasTabs) _buildTabBar(),
+            Expanded(
+              child: hasTabs
+                  ? TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildOriginalTab(),
+                        _buildAiTab(),
+                      ],
+                    )
+                  : _buildOriginalTab(),
+            ),
+          ],
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _editEntry,
-        backgroundColor: const Color(0xFF6B9B7A),
-        child: const Icon(Icons.edit),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // AI 다듬기 버튼
+          FloatingActionButton.small(
+            heroTag: 'ai',
+            onPressed: _enhancing ? null : _enhanceWithAi,
+            backgroundColor: Colors.purple.shade400,
+            child: _enhancing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.auto_awesome, size: 18),
+          ),
+          const SizedBox(height: 8),
+          FloatingActionButton(
+            heroTag: 'edit',
+            onPressed: _editEntry,
+            backgroundColor: const Color(0xFF6B9B7A),
+            child: const Icon(Icons.edit),
+          ),
+        ],
       ),
     );
   }
@@ -97,23 +187,133 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
     );
   }
 
-  Widget _buildBody() {
-    return Padding(
+  Widget _buildTabBar() {
+    return Container(
+      color: Colors.white,
+      child: TabBar(
+        controller: _tabController,
+        labelColor: const Color(0xFF6B9B7A),
+        unselectedLabelColor: Colors.grey,
+        indicatorColor: const Color(0xFF6B9B7A),
+        tabs: const [
+          Tab(icon: Icon(Icons.edit_note, size: 18), text: '내 일기'),
+          Tab(icon: Icon(Icons.auto_awesome, size: 18), text: 'AI 버전'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOriginalTab() {
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildHeader(),
           const Divider(height: 32),
-          _buildContent(),
+          _buildTextContent(_entry.content),
           const SizedBox(height: 24),
           _buildInfoCards(),
+          const SizedBox(height: 80),
         ],
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildAiTab() {
+    final aiText = _entry.aiContent ?? '';
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // AI 배지
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.purple.shade300,
+                  const Color(0xFF6B9B7A),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_awesome, size: 14, color: Colors.white),
+                SizedBox(width: 6),
+                Text('AI가 다듬은 SNS 버전',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildHeader(showWeather: false),
+          const Divider(height: 32),
+          // AI 본문
+          SelectableText(
+            aiText,
+            style: const TextStyle(
+              fontSize: 15,
+              height: 1.9,
+              color: Color(0xFF3A3A3A),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // 복사 & 공유 버튼
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: aiText));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('클립보드에 복사되었습니다'),
+                        backgroundColor: Color(0xFF6B9B7A),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('복사'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF6B9B7A),
+                    side: const BorderSide(color: Color(0xFF6B9B7A)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _enhancing ? null : _enhanceWithAi,
+                  icon: _enhancing
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.refresh, size: 16),
+                  label: const Text('다시 생성'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple.shade400,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader({bool showWeather = true}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -146,7 +346,7 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
             ),
           ],
         ),
-        if (_entry.weather != null) ...[
+        if (showWeather && _entry.weather != null) ...[
           const SizedBox(height: 4),
           Text(_entry.weather!, style: const TextStyle(fontSize: 20)),
         ],
@@ -154,15 +354,16 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
     );
   }
 
-  Widget _buildContent() {
-    if (_entry.content.isEmpty) {
+  Widget _buildTextContent(String text) {
+    if (text.isEmpty) {
       return Text(
         '내용이 없습니다.',
-        style: TextStyle(color: Colors.grey.shade400, fontStyle: FontStyle.italic),
+        style: TextStyle(
+            color: Colors.grey.shade400, fontStyle: FontStyle.italic),
       );
     }
     return Text(
-      _entry.content,
+      text,
       style: const TextStyle(
         fontSize: 16,
         height: 1.8,
@@ -181,8 +382,8 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
       infos.add(_InfoItem(Icons.phone_android, '기기', _entry.deviceModel!));
     }
     if (_entry.batteryLevel != null) {
-      infos.add(_InfoItem(
-          Icons.battery_std, '배터리', '${_entry.batteryLevel}%'));
+      infos.add(
+          _InfoItem(Icons.battery_std, '배터리', '${_entry.batteryLevel}%'));
     }
     if (_entry.latitude != null && _entry.longitude != null) {
       infos.add(_InfoItem(
@@ -216,7 +417,8 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
-                    Icon(item.icon, size: 18, color: const Color(0xFF6B9B7A)),
+                    Icon(item.icon,
+                        size: 18, color: const Color(0xFF6B9B7A)),
                     const SizedBox(width: 12),
                     SizedBox(
                       width: 50,
@@ -241,8 +443,7 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen> {
   void _editEntry() async {
     final updated = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-          builder: (_) => DiaryEditScreen(existing: _entry)),
+      MaterialPageRoute(builder: (_) => DiaryEditScreen(existing: _entry)),
     );
     if (updated == true && mounted) Navigator.pop(context, true);
   }

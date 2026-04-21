@@ -5,6 +5,7 @@ import '../services/database_service.dart';
 import '../widgets/diary_card.dart';
 import 'diary_edit_screen.dart';
 import 'diary_detail_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -94,6 +95,13 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.search, color: Color(0xFF2C2C2C)),
             onPressed: _showSearchBar,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: Color(0xFF2C2C2C)),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
           ),
         ],
       ),

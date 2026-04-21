@@ -18,13 +18,14 @@ class DatabaseService {
     final dbPath = await getDatabasesPath();
     return openDatabase(
       join(dbPath, 'daily_diary.db'),
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE diary_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
+            ai_content TEXT,
             date TEXT NOT NULL,
             photo_paths TEXT,
             mood TEXT,
@@ -37,6 +38,12 @@ class DatabaseService {
             steps INTEGER
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+              'ALTER TABLE diary_entries ADD COLUMN ai_content TEXT');
+        }
       },
     );
   }
@@ -93,8 +100,8 @@ class DatabaseService {
     final db = await database;
     final maps = await db.query(
       'diary_entries',
-      where: 'title LIKE ? OR content LIKE ?',
-      whereArgs: ['%$query%', '%$query%'],
+      where: 'title LIKE ? OR content LIKE ? OR ai_content LIKE ?',
+      whereArgs: ['%$query%', '%$query%', '%$query%'],
       orderBy: 'date DESC',
     );
     return maps.map(DiaryEntry.fromMap).toList();
