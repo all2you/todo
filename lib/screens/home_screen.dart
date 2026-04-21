@@ -3,9 +3,12 @@ import 'package:intl/intl.dart';
 import '../models/diary_entry.dart';
 import '../services/database_service.dart';
 import '../widgets/diary_card.dart';
+import '../widgets/calendar_view.dart';
 import 'diary_edit_screen.dart';
 import 'diary_detail_screen.dart';
 import 'settings_screen.dart';
+
+enum _ViewMode { list, calendar }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   String _searchQuery = '';
   final _searchController = TextEditingController();
+  _ViewMode _viewMode = _ViewMode.list;
 
   @override
   void initState() {
@@ -86,16 +90,35 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
         title: const Text(
           '나의 하루 일기',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF2C2C2C),
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
         ),
         actions: [
+          // 캘린더/목록 토글
           IconButton(
-            icon: const Icon(Icons.search, color: Color(0xFF2C2C2C)),
-            onPressed: _showSearchBar,
+            icon: Icon(
+              _viewMode == _ViewMode.list
+                  ? Icons.calendar_month
+                  : Icons.view_list,
+              color: const Color(0xFF2C2C2C),
+            ),
+            tooltip: _viewMode == _ViewMode.list ? '캘린더 보기' : '목록 보기',
+            onPressed: () => setState(() {
+              _viewMode = _viewMode == _ViewMode.list
+                  ? _ViewMode.calendar
+                  : _ViewMode.list;
+              // 캘린더 모드에선 검색 초기화
+              if (_viewMode == _ViewMode.calendar) {
+                _searchQuery = '';
+                _searchController.clear();
+                _loadEntries();
+              }
+            }),
           ),
+          if (_viewMode == _ViewMode.list)
+            IconButton(
+              icon: const Icon(Icons.search, color: Color(0xFF2C2C2C)),
+              onPressed: _showSearchBar,
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined, color: Color(0xFF2C2C2C)),
             onPressed: () => Navigator.push(
@@ -105,18 +128,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_searchQuery.isNotEmpty) _buildSearchBanner(),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _entries.isEmpty
-                    ? _buildEmptyState()
-                    : _buildEntryList(),
-          ),
-        ],
-      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _viewMode == _ViewMode.calendar
+              ? _buildCalendarBody()
+              : _buildListBody(),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final created = await Navigator.push<bool>(
@@ -129,6 +145,29 @@ class _HomeScreenState extends State<HomeScreen> {
         label: const Text('오늘 일기 쓰기'),
         backgroundColor: const Color(0xFF6B9B7A),
       ),
+    );
+  }
+
+  // ── 캘린더 뷰 ──────────────────────────────────────────
+  Widget _buildCalendarBody() {
+    return CalendarView(
+      entries: _entries,
+      onEntryTap: _openDetail,
+      onDaySelected: (_) {},
+    );
+  }
+
+  // ── 목록 뷰 ────────────────────────────────────────────
+  Widget _buildListBody() {
+    return Column(
+      children: [
+        if (_searchQuery.isNotEmpty) _buildSearchBanner(),
+        Expanded(
+          child: _entries.isEmpty
+              ? _buildEmptyState()
+              : _buildEntryList(),
+        ),
+      ],
     );
   }
 
@@ -201,9 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (_, index) {
         int cursor = 0;
         for (final month in months) {
-          if (index == cursor) {
-            return _buildMonthHeader(month);
-          }
+          if (index == cursor) return _buildMonthHeader(month);
           cursor++;
           final list = grouped[month]!;
           if (index < cursor + list.length) {

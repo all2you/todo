@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/diary_entry.dart';
 import '../services/openai_service.dart';
 import 'diary_edit_screen.dart';
@@ -73,6 +74,25 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
       }
     } finally {
       if (mounted) setState(() => _enhancing = false);
+    }
+  }
+
+  Future<void> _shareToSns(String text) async {
+    // 사진이 있으면 함께 공유
+    final photos = _entry.photoPaths
+        .where((p) => File(p).existsSync())
+        .take(4)
+        .map((p) => XFile(p))
+        .toList();
+
+    if (photos.isNotEmpty) {
+      await Share.shareXFiles(
+        photos,
+        text: text,
+        subject: _entry.title,
+      );
+    } else {
+      await Share.share(text, subject: _entry.title);
     }
   }
 
@@ -265,7 +285,25 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
             ),
           ),
           const SizedBox(height: 20),
-          // 복사 & 공유 버튼
+          // SNS 공유 버튼 (강조)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _shareToSns(aiText),
+              icon: const Icon(Icons.share, size: 18),
+              label: const Text('SNS에 공유하기',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6B9B7A),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // 복사 & 다시 생성
           Row(
             children: [
               Expanded(

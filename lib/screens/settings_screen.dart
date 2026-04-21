@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/openai_service.dart';
+import '../services/notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -9,10 +10,15 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  // OpenAI
   final _keyCtrl = TextEditingController();
   bool _obscure = true;
   String _selectedModel = 'gpt-4o-mini';
-  bool _saved = false;
+
+  // 알림
+  bool _notifEnabled = false;
+  TimeOfDay _notifTime = const TimeOfDay(hour: 21, minute: 0);
+  bool _notifLoading = false;
 
   static const _models = [
     ('gpt-4o-mini', 'GPT-4o Mini', '빠르고 경제적'),
@@ -35,16 +41,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     final key = await OpenAiService.getApiKey();
     final model = await OpenAiService.getModel();
+    final notif = await NotificationService.loadSettings();
     setState(() {
       _keyCtrl.text = key ?? '';
       _selectedModel = model;
+      _notifEnabled = notif.enabled;
+      _notifTime = TimeOfDay(hour: notif.hour, minute: notif.minute);
     });
   }
 
   Future<void> _save() async {
     await OpenAiService.saveApiKey(_keyCtrl.text);
     await OpenAiService.saveModel(_selectedModel);
-    setState(() => _saved = true);
+    await _applyNotificationSetting(_notifEnabled);
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -53,6 +63,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _applyNotificationSetting(bool enabled) async {
+    await NotificationService.saveSettings(
+      enabled: enabled,
+      hour: _notifTime.hour,
+      minute: _notifTime.minute,
+    );
+    if (enabled) {
+      await NotificationService.scheduleDailyReminder(_notifTime);
+    } else {
+      await NotificationService.cancelReminder();
+    }
+  }
+
+  Future<void> _toggleNotification(bool value) async {
+    if (value) {
+      setState(() => _notifLoading = true);
+      final granted = await NotificationService.requestPermission();
+      setState(() => _notifLoading = false);
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('알림 권한이 거부되었습니다. 설정에서 허용해주세요.')),
+          );
+        }
+        return;
+      }
+    }
+    setState(() => _notifEnabled = value);
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _notifTime,
+      helpText: '알림 받을 시간 선택',
+      builder: (ctx, child) => MediaQuery(
+        data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: false),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _notifTime = picked);
   }
 
   @override
@@ -64,13 +117,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         elevation: 0,
         title: const Text(
           '설정',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+          style: TextStyle(
+              fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
         ),
         iconTheme: const IconThemeData(color: Color(0xFF2C2C2C)),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // ── 알림 섹션 ───────────────────────────────────
+          _buildSection(
+            icon: Icons.notifications_outlined,
+            title: '매일 일기 알림',
+            children: [_buildNotifSettings()],
+          ),
+          const SizedBox(height: 16),
+          // ── OpenAI 섹션 ─────────────────────────────────
           _buildSection(
             icon: Icons.auto_awesome,
             title: 'AI 글 다듬기 (OpenAI)',
@@ -130,6 +192,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildNotifSettings() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('알림 켜기',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  SizedBox(height: 2),
+                  Text('매일 지정한 시간에 일기 쓰기를 알려드려요',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+            ),
+            _notifLoading
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Switch(
+                    value: _notifEnabled,
+                    activeColor: const Color(0xFF6B9B7A),
+                    onChanged: _toggleNotification,
+                  ),
+          ],
+        ),
+        if (_notifEnabled) ...[
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: _pickTime,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6B9B7A).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: const Color(0xFF6B9B7A).withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.access_time,
+                      color: Color(0xFF6B9B7A), size: 20),
+                  const SizedBox(width: 12),
+                  Text(
+                    _notifTime.format(context),
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6B9B7A)),
+                  ),
+                  const Spacer(),
+                  const Text('시간 변경',
+                      style: TextStyle(
+                          fontSize: 12, color: Color(0xFF6B9B7A))),
+                  const Icon(Icons.chevron_right,
+                      size: 16, color: Color(0xFF6B9B7A)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '저장 버튼을 눌러야 알림이 설정됩니다.',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildApiKeyField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,7 +293,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () => setState(() => _obscure = !_obscure),
             ),
           ),
-          onChanged: (_) => setState(() => _saved = false),
         ),
       ],
     );
@@ -174,10 +309,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final (id, name, desc) = m;
           final selected = _selectedModel == id;
           return GestureDetector(
-            onTap: () => setState(() {
-              _selectedModel = id;
-              _saved = false;
-            }),
+            onTap: () => setState(() => _selectedModel = id),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               margin: const EdgeInsets.only(bottom: 8),

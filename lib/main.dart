@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'screens/home_screen.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ko', null);
+  await NotificationService.init();
+
+  // 저장된 알림 설정이 있으면 재등록 (앱 재시작 시)
+  final notif = await NotificationService.loadSettings();
+  if (notif.enabled) {
+    await NotificationService.scheduleDailyReminder(
+      TimeOfDay(hour: notif.hour, minute: notif.minute),
+    );
+  }
+
   runApp(const DailyDiaryApp());
 }
 
