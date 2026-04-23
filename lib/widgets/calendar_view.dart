@@ -69,7 +69,7 @@ class _CalendarViewState extends State<CalendarView> {
       calendarStyle: CalendarStyle(
         // 오늘 날짜
         todayDecoration: BoxDecoration(
-          color: const Color(0xFF6B9B7A).withValues(alpha: 0.3),
+          color: const Color(0xFF6B9B7A).withOpacity(0.3),
           shape: BoxShape.circle,
         ),
         todayTextStyle: const TextStyle(
@@ -109,7 +109,7 @@ class _CalendarViewState extends State<CalendarView> {
           return Container(
             margin: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: const Color(0xFF6B9B7A).withValues(alpha: 0.08),
+              color: const Color(0xFF6B9B7A).withOpacity(0.08),
               borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
@@ -192,7 +192,7 @@ class _CalendarViewState extends State<CalendarView> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+              color: const Color(0xFF6B9B7A).withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             alignment: Alignment.center,

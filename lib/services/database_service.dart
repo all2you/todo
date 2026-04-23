@@ -18,7 +18,7 @@ class DatabaseService {
     final dbPath = await getDatabasesPath();
     return openDatabase(
       join(dbPath, 'daily_diary.db'),
-      version: 2,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE diary_entries (
@@ -31,18 +31,34 @@ class DatabaseService {
             mood TEXT,
             weather TEXT,
             location TEXT,
+            district TEXT,
+            city TEXT,
+            country TEXT,
             latitude REAL,
             longitude REAL,
             battery_level INTEGER,
             device_model TEXT,
-            steps INTEGER
+            steps INTEGER,
+            time_context TEXT,
+            tags TEXT
           )
         ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
+          await db
+              .execute('ALTER TABLE diary_entries ADD COLUMN ai_content TEXT');
+        }
+        if (oldVersion < 3) {
+          await db
+              .execute('ALTER TABLE diary_entries ADD COLUMN district TEXT');
+          await db.execute('ALTER TABLE diary_entries ADD COLUMN city TEXT');
+          await db.execute('ALTER TABLE diary_entries ADD COLUMN country TEXT');
           await db.execute(
-              'ALTER TABLE diary_entries ADD COLUMN ai_content TEXT');
+              'ALTER TABLE diary_entries ADD COLUMN time_context TEXT');
+        }
+        if (oldVersion < 4) {
+          await db.execute('ALTER TABLE diary_entries ADD COLUMN tags TEXT');
         }
       },
     );
@@ -100,10 +116,21 @@ class DatabaseService {
     final db = await database;
     final maps = await db.query(
       'diary_entries',
-      where: 'title LIKE ? OR content LIKE ? OR ai_content LIKE ?',
-      whereArgs: ['%$query%', '%$query%', '%$query%'],
+      where: 'title LIKE ? OR content LIKE ? OR ai_content LIKE ? OR tags LIKE ?',
+      whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
       orderBy: 'date DESC',
     );
     return maps.map(DiaryEntry.fromMap).toList();
+  }
+
+  /// 오늘과 같은 월/일인 과거 연도의 일기들 (작년 오늘, 2년 전 오늘 등)
+  Future<List<DiaryEntry>> getOnThisDay(DateTime today) async {
+    final all = await getAllEntries();
+    return all
+        .where((e) =>
+            e.date.month == today.month &&
+            e.date.day == today.day &&
+            e.date.year < today.year)
+        .toList();
   }
 }

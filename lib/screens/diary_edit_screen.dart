@@ -7,11 +7,15 @@ import '../models/diary_entry.dart';
 import '../services/database_service.dart';
 import '../services/device_info_service.dart';
 import '../services/openai_service.dart';
+import '../services/step_counter_service.dart';
+import '../services/weather_service.dart';
+import '../widgets/map_location_picker.dart';
 
 class DiaryEditScreen extends StatefulWidget {
   final DiaryEntry? existing;
+  final DateTime? initialDate;
 
-  const DiaryEditScreen({super.key, this.existing});
+  const DiaryEditScreen({super.key, this.existing, this.initialDate});
 
   @override
   State<DiaryEditScreen> createState() => _DiaryEditScreenState();
@@ -28,8 +32,21 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
   String? _mood;
   String? _weather;
   DeviceSnapshot? _deviceSnapshot;
+  int? _todaySteps;
+  List<String> _tags = [];
   bool _loadingDevice = false;
   bool _saving = false;
+
+  // 위치 수동 변경
+  String? _overrideAddress;
+  String? _overrideDistrict;
+  String? _overrideCity;
+  String? _overrideCountry;
+  double? _overrideLat;
+  double? _overrideLon;
+
+  // 실제 작성 시각
+  late final DateTime _writtenAt;
 
   // AI 다듬기 상태
   String? _aiContent;
@@ -39,6 +56,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
   @override
   void initState() {
     super.initState();
+    _writtenAt = DateTime.now();
     final e = widget.existing;
     if (e != null) {
       _titleCtrl.text = e.title;
@@ -47,15 +65,22 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       _photos = List.from(e.photoPaths);
       _mood = e.mood;
       _weather = e.weather;
+      _tags = List.from(e.tags);
       if (e.aiContent != null) {
         _aiContent = e.aiContent;
         _showAiPreview = true;
       }
     } else {
-      _selectedDate = DateTime.now();
+      _selectedDate = widget.initialDate ?? DateTime.now();
       _titleCtrl.text = DateFormat('yyyy년 MM월 dd일', 'ko').format(_selectedDate);
       _fetchDeviceInfo();
+      _fetchTodaySteps();
     }
+  }
+
+  Future<void> _fetchTodaySteps() async {
+    final steps = await StepCounterService.getTodaySteps();
+    if (mounted) setState(() => _todaySteps = steps);
   }
 
   @override
@@ -69,9 +94,22 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
     setState(() => _loadingDevice = true);
     try {
       final snap = await DeviceInfoService.getSnapshot();
-      if (mounted) setState(() => _deviceSnapshot = snap);
+      if (mounted) {
+        setState(() => _deviceSnapshot = snap);
+        // 위치 정보가 있으면 날씨 자동 감지
+        if (snap.latitude != null && snap.longitude != null) {
+          _fetchWeatherForLocation(snap.latitude!, snap.longitude!);
+        }
+      }
     } finally {
       if (mounted) setState(() => _loadingDevice = false);
+    }
+  }
+
+  Future<void> _fetchWeatherForLocation(double lat, double lon) async {
+    final emoji = await WeatherService.fetchWeatherEmoji(lat, lon);
+    if (emoji != null && mounted && _weather == null) {
+      setState(() => _weather = emoji);
     }
   }
 
@@ -96,12 +134,20 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       date: _selectedDate,
       mood: _mood,
       weather: _weather,
-      location: _deviceSnapshot?.address,
+      location: _overrideAddress ?? _deviceSnapshot?.address,
+      district: _overrideDistrict ?? _deviceSnapshot?.district,
+      city: _overrideCity ?? _deviceSnapshot?.city,
+      country: _overrideCountry ?? _deviceSnapshot?.country,
       batteryLevel: _deviceSnapshot?.batteryLevel,
+      timeContext: _deviceSnapshot?.timeOfDay,
+      photoPaths: _photos,
     );
 
     try {
-      final result = await OpenAiService.enhanceDiary(tempEntry);
+      final result = await OpenAiService.enhanceDiary(
+        tempEntry,
+        photoPaths: _photos,
+      );
       if (mounted) {
         setState(() {
           _aiContent = result;
@@ -195,11 +241,17 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       photoPaths: _photos,
       mood: _mood,
       weather: _weather,
-      location: _deviceSnapshot?.address,
-      latitude: _deviceSnapshot?.latitude,
-      longitude: _deviceSnapshot?.longitude,
+      location: _overrideAddress ?? _deviceSnapshot?.address,
+      district: _overrideDistrict ?? _deviceSnapshot?.district,
+      city: _overrideCity ?? _deviceSnapshot?.city,
+      country: _overrideCountry ?? _deviceSnapshot?.country,
+      latitude: _overrideLat ?? _deviceSnapshot?.latitude,
+      longitude: _overrideLon ?? _deviceSnapshot?.longitude,
       batteryLevel: _deviceSnapshot?.batteryLevel,
       deviceModel: _deviceSnapshot?.deviceModel,
+      timeContext: _deviceSnapshot?.timeOfDay,
+      steps: _todaySteps ?? widget.existing?.steps,
+      tags: _tags,
     );
 
     if (widget.existing == null) {
@@ -212,30 +264,57 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
   }
 
   Future<void> _selectDate() async {
+    final oldStr =
+        DateFormat('yyyy\ub144 MM\uc6d4 dd\uc77c', 'ko').format(_selectedDate);
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2000),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
-    if (picked != null) setState(() => _selectedDate = picked);
+    if (picked != null) {
+      final newStr =
+          DateFormat('yyyy\ub144 MM\uc6d4 dd\uc77c', 'ko').format(picked);
+      setState(() {
+        if (_titleCtrl.text == oldStr) _titleCtrl.text = newStr;
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  Future<void> _showLocationSearch() async {
+    final result = await Navigator.push<LocationPickerResult>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MapLocationPicker(
+          initialLat: _overrideLat ?? _deviceSnapshot?.latitude,
+          initialLon: _overrideLon ?? _deviceSnapshot?.longitude,
+        ),
+      ),
+    );
+    if (result != null && mounted) {
+      setState(() {
+        _overrideLat = result.lat;
+        _overrideLon = result.lon;
+        _overrideAddress = result.address;
+        _overrideDistrict = result.district;
+        _overrideCity = result.city;
+        _overrideCountry = result.country;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F3EE),
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Color(0xFF2C2C2C)),
+          icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           widget.existing == null ? '새 일기' : '일기 수정',
-          style: const TextStyle(
-              fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
           _saving
@@ -272,6 +351,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             const SizedBox(height: 12),
             _buildContentField(),
             const SizedBox(height: 12),
+            _buildTagsSection(),
+            const SizedBox(height: 12),
             _buildAiEnhanceButton(),
             if (_showAiPreview && _aiContent != null) ...[
               const SizedBox(height: 16),
@@ -279,6 +360,8 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             ],
             const SizedBox(height: 16),
             _buildPhotoSection(),
+            const SizedBox(height: 8),
+            _buildWrittenAtRow(),
             const SizedBox(height: 40),
           ],
         ),
@@ -329,15 +412,50 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
     }
 
     final snap = _deviceSnapshot;
-    if (snap == null) return const SizedBox.shrink();
+    if (snap == null) {
+      // GPS/기기 정보 없을 때도 위치 직접 설정 가능
+      return GestureDetector(
+        onTap: _showLocationSearch,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.location_on, size: 16, color: const Color(0xFF6B9B7A)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _overrideAddress != null
+                      ? [_overrideAddress, _overrideCity, _overrideCountry]
+                          .where((e) => e != null && e.isNotEmpty)
+                          .join(', ')
+                      : '위치를 탭하여 검색하세요',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: _overrideAddress != null
+                        ? const Color(0xFF4A4A4A)
+                        : Colors.grey,
+                  ),
+                ),
+              ),
+              Icon(Icons.edit_location_alt,
+                  size: 16, color: Colors.grey.shade400),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF6B9B7A).withValues(alpha: 0.08),
+        color: const Color(0xFF6B9B7A).withOpacity(0.08),
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: const Color(0xFF6B9B7A).withValues(alpha: 0.2)),
+        border: Border.all(color: const Color(0xFF6B9B7A).withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -356,8 +474,18 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
               _infoChip(Icons.battery_std,
                   '배터리 ${snap.batteryLevel}%${snap.isCharging ? " ⚡" : ""}'),
               _infoChip(Icons.wifi, snap.connectivity),
-              if (snap.address != null && snap.address!.isNotEmpty)
-                _infoChip(Icons.location_on, snap.address!),
+              if (_todaySteps != null)
+                _infoChip(Icons.directions_walk, '$_todaySteps보'),
+              GestureDetector(
+                onTap: _showLocationSearch,
+                child: _infoChip(
+                  Icons.location_on,
+                  _overrideAddress ??
+                      (snap.address?.isNotEmpty == true
+                          ? snap.address!
+                          : '위치 설정 ✏️'),
+                ),
+              ),
             ],
           ),
         ],
@@ -401,7 +529,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected
-                        ? const Color(0xFF6B9B7A).withValues(alpha: 0.15)
+                        ? const Color(0xFF6B9B7A).withOpacity(0.15)
                         : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
@@ -445,15 +573,15 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
             children: List.generate(kWeathers.length, (i) {
               final selected = _weather == kWeathers[i];
               return GestureDetector(
-                onTap: () => setState(
-                    () => _weather = selected ? null : kWeathers[i]),
+                onTap: () =>
+                    setState(() => _weather = selected ? null : kWeathers[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected
-                        ? Colors.blue.withValues(alpha: 0.1)
+                        ? Colors.blue.withOpacity(0.1)
                         : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
@@ -511,6 +639,76 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
     );
   }
 
+  Widget _buildTagsSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+          color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('태그',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(width: 8),
+              Text('(${_tags.length}개)',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: _addTag,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('추가'),
+                style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF6B9B7A)),
+              ),
+            ],
+          ),
+          if (_tags.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                '태그로 일기를 분류해보세요 (예: 여행, 운동, 일상)',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              ),
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: _tags
+                  .map((t) => Chip(
+                        label:
+                            Text('#$t', style: const TextStyle(fontSize: 12)),
+                        backgroundColor:
+                            const Color(0xFF6B9B7A).withOpacity(0.1),
+                        side: BorderSide(
+                            color: const Color(0xFF6B9B7A).withOpacity(0.3)),
+                        labelStyle: const TextStyle(color: Color(0xFF6B9B7A)),
+                        deleteIconColor: const Color(0xFF6B9B7A),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onDeleted: () => setState(() => _tags.remove(t)),
+                      ))
+                  .toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addTag() async {
+    final tag = await showDialog<String>(
+      context: context,
+      builder: (_) => const _TagInputDialog(),
+    );
+    if (tag == null) return;
+    final cleaned = tag.trim().replaceAll(RegExp(r'[,#\s]+'), '').toLowerCase();
+    if (cleaned.isEmpty) return;
+    if (_tags.contains(cleaned)) return;
+    setState(() => _tags.add(cleaned));
+  }
+
   Widget _buildAiEnhanceButton() {
     return SizedBox(
       width: double.infinity,
@@ -541,15 +739,15 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFF6B9B7A).withValues(alpha: 0.05),
-            Colors.purple.withValues(alpha: 0.05),
+            const Color(0xFF6B9B7A).withOpacity(0.05),
+            Colors.purple.withOpacity(0.05),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFF6B9B7A).withValues(alpha: 0.3),
+          color: const Color(0xFF6B9B7A).withOpacity(0.3),
         ),
       ),
       child: Column(
@@ -559,7 +757,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+              color: const Color(0xFF6B9B7A).withOpacity(0.1),
               borderRadius:
                   const BorderRadius.vertical(top: Radius.circular(16)),
             ),
@@ -595,7 +793,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                          color: const Color(0xFF6B9B7A).withValues(alpha: 0.4)),
+                          color: const Color(0xFF6B9B7A).withOpacity(0.4)),
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -613,8 +811,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                 // 닫기
                 GestureDetector(
                   onTap: () => setState(() => _showAiPreview = false),
-                  child: const Icon(Icons.close,
-                      size: 16, color: Colors.grey),
+                  child: const Icon(Icons.close, size: 16, color: Colors.grey),
                 ),
               ],
             ),
@@ -654,8 +851,7 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
                 label: const Text('이 글로 본문 교체하기'),
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFF6B9B7A),
-                  backgroundColor:
-                      const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+                  backgroundColor: const Color(0xFF6B9B7A).withOpacity(0.1),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
                 ),
@@ -728,6 +924,63 @@ class _DiaryEditScreenState extends State<DiaryEditScreen> {
               ),
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildWrittenAtRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Icon(Icons.history, size: 12, color: Colors.grey.shade400),
+        const SizedBox(width: 4),
+        Text(
+          '작성: ${DateFormat('yyyy.MM.dd HH:mm').format(_writtenAt)}',
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+        ),
+      ],
+    );
+  }
+}
+
+class _TagInputDialog extends StatefulWidget {
+  const _TagInputDialog();
+
+  @override
+  State<_TagInputDialog> createState() => _TagInputDialogState();
+}
+
+class _TagInputDialogState extends State<_TagInputDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('태그 추가'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        maxLength: 20,
+        decoration: const InputDecoration(
+          hintText: '예: 여행, 운동, 일상',
+          prefixText: '#',
+          counterText: '',
+        ),
+        onSubmitted: (_) => Navigator.pop(context, _ctrl.text),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text('취소')),
+        TextButton(
+          onPressed: () => Navigator.pop(context, _ctrl.text),
+          child: const Text('추가'),
+        ),
       ],
     );
   }

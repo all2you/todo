@@ -13,7 +13,13 @@ class DeviceSnapshot {
   final String connectivity;
   final double? latitude;
   final double? longitude;
-  final String? address;
+  final String? address; // 동/읍/면 수준
+  final String? district; // 구/군
+  final String? city; // 시/도
+  final String? country; // 국가
+  final String timeOfDay; // 아침/오전/점심/오후/저녁/밤
+  final String localTime; // HH:mm
+  final String dayOfWeek; // 월요일 등
 
   const DeviceSnapshot({
     required this.deviceModel,
@@ -24,6 +30,12 @@ class DeviceSnapshot {
     this.latitude,
     this.longitude,
     this.address,
+    this.district,
+    this.city,
+    this.country,
+    required this.timeOfDay,
+    required this.localTime,
+    required this.dayOfWeek,
   });
 }
 
@@ -32,6 +44,8 @@ class DeviceInfoService {
   static final _deviceInfo = DeviceInfoPlugin();
 
   static Future<DeviceSnapshot> getSnapshot() async {
+    final now = DateTime.now();
+
     final results = await Future.wait([
       _getDeviceModel(),
       _getBatteryInfo(),
@@ -53,7 +67,35 @@ class DeviceInfoService {
       latitude: location?.$1,
       longitude: location?.$2,
       address: location?.$3,
+      district: location?.$4,
+      city: location?.$5,
+      country: location?.$6,
+      timeOfDay: _getTimeOfDay(now),
+      localTime: _formatTime(now),
+      dayOfWeek: _getDayOfWeek(now),
     );
+  }
+
+  static String _getTimeOfDay(DateTime t) {
+    final h = t.hour;
+    if (h >= 5 && h < 8) return '이른 아침';
+    if (h >= 8 && h < 11) return '아침';
+    if (h >= 11 && h < 13) return '점심';
+    if (h >= 13 && h < 17) return '오후';
+    if (h >= 17 && h < 20) return '저녁';
+    if (h >= 20 && h < 23) return '밤';
+    return '새벽';
+  }
+
+  static String _formatTime(DateTime t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  static String _getDayOfWeek(DateTime t) {
+    const days = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'];
+    return days[t.weekday - 1];
   }
 
   static Future<String> _getDeviceModel() async {
@@ -82,15 +124,17 @@ class DeviceInfoService {
   static Future<String> _getConnectivity() async {
     try {
       final result = await Connectivity().checkConnectivity();
-      if (result.contains(ConnectivityResult.wifi)) return 'Wi-Fi';
-      if (result.contains(ConnectivityResult.mobile)) return '모바일 데이터';
+      if (result == ConnectivityResult.wifi) return 'Wi-Fi';
+      if (result == ConnectivityResult.mobile) return '모바일 데이터';
       return '오프라인';
     } catch (_) {
       return '알 수 없음';
     }
   }
 
-  static Future<(double, double, String?)?> _getLocation() async {
+  // (lat, lon, 동/읍, 구/군, 시/도, 국가)
+  static Future<(double, double, String?, String?, String?, String?)?>
+      _getLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
@@ -103,22 +147,34 @@ class DeviceInfoService {
       if (permission == LocationPermission.deniedForever) return null;
 
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+        desiredAccuracy: LocationAccuracy.medium,
       );
 
       String? address;
+      String? district;
+      String? city;
+      String? country;
+
       try {
         final placemarks =
             await placemarkFromCoordinates(pos.latitude, pos.longitude);
         if (placemarks.isNotEmpty) {
           final p = placemarks.first;
-          address = [p.locality, p.subLocality, p.thoroughfare]
+          // 동/읍/면 수준 (가장 상세)
+          address = [p.subLocality, p.thoroughfare]
               .where((e) => e != null && e.isNotEmpty)
               .join(' ');
+          if (address.isEmpty) address = p.locality;
+          // 구/군
+          district = p.subAdministrativeArea;
+          // 시/도
+          city = p.administrativeArea ?? p.locality;
+          // 국가
+          country = p.country;
         }
       } catch (_) {}
 
-      return (pos.latitude, pos.longitude, address);
+      return (pos.latitude, pos.longitude, address, district, city, country);
     } catch (_) {
       return null;
     }

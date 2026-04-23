@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/diary_entry.dart';
 import '../services/database_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/diary_card.dart';
 import '../widgets/calendar_view.dart';
 import 'diary_edit_screen.dart';
 import 'diary_detail_screen.dart';
+import 'map_overview_screen.dart';
 import 'settings_screen.dart';
+import 'stats_screen.dart';
 
 enum _ViewMode { list, calendar }
 
@@ -20,15 +23,34 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _db = DatabaseService();
   List<DiaryEntry> _entries = [];
+  List<DiaryEntry> _onThisDay = [];
+  bool _onThisDayDismissed = false;
   bool _loading = true;
   String _searchQuery = '';
   final _searchController = TextEditingController();
   _ViewMode _viewMode = _ViewMode.list;
+  DateTime _selectedCalendarDate = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     _loadEntries();
+    _loadOnThisDay();
+  }
+
+  Future<void> _loadOnThisDay() async {
+    final entries = await _db.getOnThisDay(DateTime.now());
+    if (!mounted) return;
+    setState(() => _onThisDay = entries);
+    // 한 번만 알림
+    if (entries.isNotEmpty) {
+      final latest = entries.first;
+      final yearsAgo = DateTime.now().year - latest.date.year;
+      await NotificationService.showOnThisDay(
+        yearsAgo: yearsAgo,
+        entryTitle: latest.title,
+      );
+    }
   }
 
   @override
@@ -84,13 +106,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F3EE),
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
         title: const Text(
-          '나의 하루 일기',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+          '나의 하루',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
           // 캘린더/목록 토글
@@ -99,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
               _viewMode == _ViewMode.list
                   ? Icons.calendar_month
                   : Icons.view_list,
-              color: const Color(0xFF2C2C2C),
             ),
             tooltip: _viewMode == _ViewMode.list ? '캘린더 보기' : '목록 보기',
             onPressed: () => setState(() {
@@ -116,11 +134,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           if (_viewMode == _ViewMode.list)
             IconButton(
-              icon: const Icon(Icons.search, color: Color(0xFF2C2C2C)),
+              icon: const Icon(Icons.search),
               onPressed: _showSearchBar,
             ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Color(0xFF2C2C2C)),
+            icon: const Icon(Icons.map_outlined),
+            tooltip: '지도 보기',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MapOverviewScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.bar_chart_outlined),
+            tooltip: '통계',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StatsScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -137,7 +171,11 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () async {
           final created = await Navigator.push<bool>(
             context,
-            MaterialPageRoute(builder: (_) => const DiaryEditScreen()),
+            MaterialPageRoute(
+              builder: (_) => DiaryEditScreen(
+                initialDate: _selectedCalendarDate,
+              ),
+            ),
           );
           if (created == true) _loadEntries();
         },
@@ -153,7 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return CalendarView(
       entries: _entries,
       onEntryTap: _openDetail,
-      onDaySelected: (_) {},
+      onDaySelected: (date) => setState(() => _selectedCalendarDate = date),
     );
   }
 
@@ -162,18 +200,84 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       children: [
         if (_searchQuery.isNotEmpty) _buildSearchBanner(),
+        if (_searchQuery.isEmpty &&
+            _onThisDay.isNotEmpty &&
+            !_onThisDayDismissed)
+          _buildOnThisDayBanner(),
         Expanded(
-          child: _entries.isEmpty
-              ? _buildEmptyState()
-              : _buildEntryList(),
+          child: _entries.isEmpty ? _buildEmptyState() : _buildEntryList(),
         ),
       ],
     );
   }
 
+  Widget _buildOnThisDayBanner() {
+    final entry = _onThisDay.first;
+    final yearsAgo = DateTime.now().year - entry.date.year;
+    final label = yearsAgo == 1 ? '작년 오늘' : '$yearsAgo년 전 오늘';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.orange.shade100,
+            const Color(0xFF6B9B7A).withOpacity(0.2),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openDetail(entry),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const Icon(Icons.history, color: Color(0xFF6B9B7A)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF6B9B7A))),
+                    const SizedBox(height: 2),
+                    Text(
+                      entry.title,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (_onThisDay.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text('+ ${_onThisDay.length - 1}개 더',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey.shade700)),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => setState(() => _onThisDayDismissed = true),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSearchBanner() {
     return Container(
-      color: const Color(0xFF6B9B7A).withValues(alpha: 0.1),
+      color: const Color(0xFF6B9B7A).withOpacity(0.1),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
@@ -236,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 80),
-      itemCount: months.fold(0, (sum, m) => sum + 1 + grouped[m]!.length),
+      itemCount: months.fold<int>(0, (sum, m) => sum + 1 + grouped[m]!.length),
       itemBuilder: (_, index) {
         int cursor = 0;
         for (final month in months) {

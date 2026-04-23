@@ -139,6 +139,8 @@ class DiaryCard extends StatelessWidget {
           _metaChip(Icons.battery_std, '${entry.batteryLevel}%'),
         if (entry.photoPaths.isNotEmpty)
           _metaChip(Icons.photo, '${entry.photoPaths.length}장'),
+        if (entry.tags.isNotEmpty)
+          _metaChip(Icons.tag, entry.tags.take(3).map((t) => '#$t').join(' ')),
       ],
     );
   }

@@ -27,17 +27,17 @@ class NotificationService {
   }
 
   static Future<bool> requestPermission() async {
-    final android = _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
     if (android != null) {
       return await android.requestNotificationsPermission() ?? false;
     }
-    final ios = _plugin
-        .resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>();
+    final ios = _plugin.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
     if (ios != null) {
-      return await ios.requestPermissions(alert: true, badge: true, sound: true) ?? false;
+      return await ios.requestPermissions(
+              alert: true, badge: true, sound: true) ??
+          false;
     }
     return true;
   }
@@ -67,7 +67,8 @@ class NotificationService {
       icon: '@mipmap/ic_launcher',
     );
     const iosDetails = DarwinNotificationDetails();
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+    const details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
 
     await _plugin.zonedSchedule(
       _notifId,
@@ -76,12 +77,35 @@ class NotificationService {
       scheduled,
       details,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
     );
   }
 
   static Future<void> cancelReminder() async {
     await _plugin.cancel(_notifId);
+  }
+
+  /// "작년 오늘" 같은 과거 기록이 있을 때 즉시 로컬 알림을 표시.
+  static Future<void> showOnThisDay({
+    required int yearsAgo,
+    required String entryTitle,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'daily_diary_on_this_day',
+      '작년 오늘',
+      channelDescription: '과거의 같은 날에 작성한 일기를 알려줍니다.',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+    const iosDetails = DarwinNotificationDetails();
+    const details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    final title = yearsAgo == 1 ? '작년 오늘의 일기 📖' : '$yearsAgo년 전 오늘의 일기 📖';
+    await _plugin.show(2, title, '"$entryTitle"을(를) 다시 읽어보세요', details);
   }
 
   // 설정 저장/불러오기

@@ -77,7 +77,12 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
     }
   }
 
-  Future<void> _shareToSns(String text) async {
+  Future<void> _shareToSns(String text, BuildContext btnContext) async {
+    final box = btnContext.findRenderObject() as RenderBox?;
+    final origin = box != null
+        ? box.localToGlobal(Offset.zero) & box.size
+        : const Rect.fromLTWH(100, 400, 200, 50);
+
     // 사진이 있으면 함께 공유
     final photos = _entry.photoPaths
         .where((p) => File(p).existsSync())
@@ -90,9 +95,14 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
         photos,
         text: text,
         subject: _entry.title,
+        sharePositionOrigin: origin,
       );
     } else {
-      await Share.share(text, subject: _entry.title);
+      await Share.share(
+        text,
+        subject: _entry.title,
+        sharePositionOrigin: origin,
+      );
     }
   }
 
@@ -101,7 +111,6 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
     final hasTabs = _entry.aiContent != null;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F3EE),
       body: NestedScrollView(
         headerSliverBuilder: (_, __) => [
           _buildSliverAppBar(),
@@ -156,8 +165,6 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
     return SliverAppBar(
       expandedHeight: hasPhotos ? 300 : 0,
       pinned: true,
-      backgroundColor: Colors.white,
-      iconTheme: const IconThemeData(color: Color(0xFF2C2C2C)),
       flexibleSpace: hasPhotos
           ? FlexibleSpaceBar(
               background: Stack(
@@ -208,8 +215,8 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
   }
 
   Widget _buildTabBar() {
-    return Container(
-      color: Colors.white,
+    return Material(
+      color: Theme.of(context).appBarTheme.backgroundColor,
       child: TabBar(
         controller: _tabController,
         labelColor: const Color(0xFF6B9B7A),
@@ -289,7 +296,7 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () => _shareToSns(aiText),
+              onPressed: () => _shareToSns(aiText, context),
               icon: const Icon(Icons.share, size: 18),
               label: const Text('SNS에 공유하기',
                   style: TextStyle(fontWeight: FontWeight.bold)),
@@ -388,6 +395,26 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
           const SizedBox(height: 4),
           Text(_entry.weather!, style: const TextStyle(fontSize: 20)),
         ],
+        if (_entry.tags.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _entry.tags
+                .map((t) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6B9B7A).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text('#$t',
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF6B9B7A))),
+                    ))
+                .toList(),
+          ),
+        ],
       ],
     );
   }
@@ -396,8 +423,8 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
     if (text.isEmpty) {
       return Text(
         '내용이 없습니다.',
-        style: TextStyle(
-            color: Colors.grey.shade400, fontStyle: FontStyle.italic),
+        style:
+            TextStyle(color: Colors.grey.shade400, fontStyle: FontStyle.italic),
       );
     }
     return Text(
@@ -420,8 +447,10 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
       infos.add(_InfoItem(Icons.phone_android, '기기', _entry.deviceModel!));
     }
     if (_entry.batteryLevel != null) {
-      infos.add(
-          _InfoItem(Icons.battery_std, '배터리', '${_entry.batteryLevel}%'));
+      infos.add(_InfoItem(Icons.battery_std, '배터리', '${_entry.batteryLevel}%'));
+    }
+    if (_entry.steps != null && _entry.steps! > 0) {
+      infos.add(_InfoItem(Icons.directions_walk, '걸음', '${_entry.steps}보'));
     }
     if (_entry.latitude != null && _entry.longitude != null) {
       infos.add(_InfoItem(
@@ -455,8 +484,7 @@ class _DiaryDetailScreenState extends State<DiaryDetailScreen>
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
-                    Icon(item.icon,
-                        size: 18, color: const Color(0xFF6B9B7A)),
+                    Icon(item.icon, size: 18, color: const Color(0xFF6B9B7A)),
                     const SizedBox(width: 12),
                     SizedBox(
                       width: 50,
